@@ -27,6 +27,7 @@ void Player::UpdatePosition(PlayerMoveDir dir) {
       pos_.x -= 100;
     }
     break;
+  case PlayerMoveDir::kNone:
   default:
     break;
   }

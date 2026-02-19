@@ -26,18 +26,37 @@ void GameFramework::Init() {
 }
 
 void GameFramework::Progress() {
-  if (has_new_input_) {
-    KeyPacket packet;
-    packet.move_dir = current_move_dir_;
-
-    std::cout << "has new input" << std::endl;
-    NetworkManager::Instance().SendKeyPacket(packet);
+  // send
+  KeyPacket packet;
+  if(has_new_input_) {
+    packet.move_dir = last_move_dir_;
+    WSABUF send_buf = { sizeof(KeyPacket), reinterpret_cast<char*>(&packet) };
+    DWORD sent_bytes = 0;
+    WSASend(NetworkManager::Instance().socket(), &send_buf, 1, &sent_bytes, 0, nullptr, nullptr);
     has_new_input_ = false;
+  } else {
+    packet.move_dir = PlayerMoveDir::kNone;
+    WSABUF send_buf = { sizeof(KeyPacket), reinterpret_cast<char*>(&packet) };
+    DWORD sent_bytes = 0;
+    WSASend(NetworkManager::Instance().socket(), &send_buf, 1, &sent_bytes, 0, nullptr, nullptr);
+
   }
 
-    Board::Instance().Render(hdc_);
-    Player::Instance().Render(hdc_);
+  // recv
+  PosPacket recv_packet = {};
+  char* buf = reinterpret_cast<char*>(&recv_packet);
+  int total_received = 0;
 
+  while (total_received < (int)sizeof(PosPacket)) {
+    WSABUF recv_buf = { sizeof(PosPacket) - total_received, buf + total_received };
+    DWORD recv_bytes = 0, flags = 0;
+    int result = WSARecv(NetworkManager::Instance().socket(), &recv_buf, 1, &recv_bytes, &flags, nullptr, nullptr);
+    total_received += recv_bytes;
+    Player::Instance().SetPos(recv_packet.x, recv_packet.y);
+  }
+
+  Board::Instance().Render(hdc_);
+  Player::Instance().Render(hdc_);
 }
 
 void GameFramework::CleanUp() {
@@ -52,24 +71,24 @@ void GameFramework::CleanUp() {
 void GameFramework::OnWindowMessage(HWND hwnd, UINT message_id, WPARAM w_param, LPARAM l_param) {
   if (message_id != WM_KEYDOWN) return;
   switch (w_param) {
-    case VK_UP:
-      current_move_dir_ = PlayerMoveDir::kUp;
-      has_new_input_ = true;
-      break;
-    case VK_DOWN:
-      current_move_dir_ = PlayerMoveDir::kDown;
-      has_new_input_ = true;
-      break;
-    case VK_LEFT:
-      current_move_dir_ = PlayerMoveDir::kLeft;
-      has_new_input_ = true;
-      break;
-    case VK_RIGHT:
-      current_move_dir_ = PlayerMoveDir::kRight;
-      has_new_input_ = true;
-      break;
-    default:
-      break;
+  case VK_UP:
+    last_move_dir_ = PlayerMoveDir::kUp;
+    has_new_input_ = true;
+    break;
+  case VK_DOWN:
+    last_move_dir_ = PlayerMoveDir::kDown;
+    has_new_input_ = true;
+    break;
+  case VK_LEFT:
+    last_move_dir_ = PlayerMoveDir::kLeft;
+    has_new_input_ = true;
+    break;
+  case VK_RIGHT:
+    last_move_dir_ = PlayerMoveDir::kRight;
+    has_new_input_ = true;
+    break;
+  default:
+    break;
   }
 }
 

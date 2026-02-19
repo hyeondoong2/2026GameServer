@@ -46,7 +46,7 @@ private:
   HWND hwnd_ = nullptr;
   HDC hdc_ = nullptr;
 
-  PlayerMoveDir current_move_dir_ = PlayerMoveDir::kNone;
+  PlayerMoveDir last_move_dir_ = PlayerMoveDir::kNone;
   bool has_new_input_ = false;
 };
 

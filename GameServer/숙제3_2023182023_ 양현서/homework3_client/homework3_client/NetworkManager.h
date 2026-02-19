@@ -16,7 +16,7 @@ public:
   bool Init();
   void CleanUp();
 
-  void SendKeyPacket(const KeyPacket& packet);
+  SOCKET socket() const;
 
 private:
   NetworkManager() = default;
@@ -30,12 +30,9 @@ private:
   NetworkManager(NetworkManager&&) = delete;
   NetworkManager& operator=(NetworkManager&&) = delete;
 
-  static DWORD WINAPI WorkerThread(LPVOID lpParam);
-
   static std::unique_ptr<NetworkManager> instance_;
 
   SOCKET socket_ = INVALID_SOCKET;
-  HANDLE worker_thread_handle_ = nullptr;
   CRITICAL_SECTION cs_;
 
   KeyPacket pending_packet_ = {};

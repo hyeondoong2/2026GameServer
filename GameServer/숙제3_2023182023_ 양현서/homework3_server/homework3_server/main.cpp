@@ -120,6 +120,7 @@ int main() {
     std::cout << "클라이언트 접속" << std::endl;
 
     Player* player = new Player(client_socket);
+
     HANDLE hThread = CreateThread(nullptr, 0, ClientWorker, player, 0, nullptr);
 
     if (hThread == nullptr) {
