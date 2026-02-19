@@ -39,9 +39,9 @@ bool NetworkManager::Init() {
   is_running_ = true;
   LeaveCriticalSection(&cs_);
 
-  recv_thread_handle_ = CreateThread(nullptr, 0, RecvWorker, this, 0, nullptr);
+  worker_thread_handle_ = CreateThread(nullptr, 0, WorkerThread, this, 0, nullptr);
 
-  if (recv_thread_handle_ == nullptr) {
+  if (worker_thread_handle_ == nullptr) {
     DeleteCriticalSection(&cs_);
     return false;
   }
@@ -59,10 +59,10 @@ void NetworkManager::CleanUp() {
     socket_ = INVALID_SOCKET;
   }
 
-  if (recv_thread_handle_ != nullptr) {
-    WaitForSingleObject(recv_thread_handle_, 3000);
-    CloseHandle(recv_thread_handle_);
-    recv_thread_handle_ = nullptr;
+  if (worker_thread_handle_ != nullptr) {
+    WaitForSingleObject(worker_thread_handle_, 3000);
+    CloseHandle(worker_thread_handle_);
+    worker_thread_handle_ = nullptr;
   }
 
   DeleteCriticalSection(&cs_);
@@ -78,7 +78,7 @@ void NetworkManager::SendKeyPacket(const KeyPacket& packet) {
   LeaveCriticalSection(&cs_);
 }
 
-DWORD WINAPI NetworkManager::RecvWorker(LPVOID lpParam) {
+DWORD WINAPI NetworkManager::WorkerThread(LPVOID lpParam) {
   NetworkManager* self = static_cast<NetworkManager*>(lpParam);
 
   while (self->is_running_) {
@@ -124,9 +124,6 @@ DWORD WINAPI NetworkManager::RecvWorker(LPVOID lpParam) {
   return 0;
 }
 
-DWORD __stdcall NetworkManager::SendWorker(LPVOID lpParam) {
-  return 0;
-}
 
 void NetworkManager::err_disp(const char* msg, int err_no) {
   WCHAR* h_mess;

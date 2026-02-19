@@ -30,14 +30,12 @@ private:
   NetworkManager(NetworkManager&&) = delete;
   NetworkManager& operator=(NetworkManager&&) = delete;
 
-  static DWORD WINAPI RecvWorker(LPVOID lpParam);
-  static DWORD WINAPI SendWorker(LPVOID lpParam);
+  static DWORD WINAPI WorkerThread(LPVOID lpParam);
 
   static std::unique_ptr<NetworkManager> instance_;
 
   SOCKET socket_ = INVALID_SOCKET;
-  HANDLE recv_thread_handle_ = nullptr;
-  HANDLE send_thread_handle_ = nullptr;
+  HANDLE worker_thread_handle_ = nullptr;
   CRITICAL_SECTION cs_;
 
   KeyPacket pending_packet_ = {};
