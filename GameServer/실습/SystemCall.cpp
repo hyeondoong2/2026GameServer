@@ -9,7 +9,7 @@ int main() {
   volatile long long tmp = 0;
   auto start = high_resolution_clock::now();
 
-  for (int j = 0;j < 10000000;++j) {
+  for (int j = 0;j <= 10000000;++j) {
     tmp += j;
 
     // 시스템콜

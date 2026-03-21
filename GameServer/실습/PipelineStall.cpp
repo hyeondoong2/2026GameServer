@@ -14,6 +14,7 @@ int abs2(int x) {
 
 constexpr int T_SIZE = 100000000;
 short rand_arr[T_SIZE];
+
 int main() {
   for (int i = 0; i < T_SIZE; ++i) rand_arr[i] = rand() - 16384;
   int sum = 0;

@@ -4,139 +4,185 @@
 #include "thread"
 #include "memory.h"
 #include "Player.h"
+#include "Session.h"
+#include "EXP_OVER.h"
+#include "Protocol.h"
+#include <unordered_map>
 
 using namespace std;
 #pragma comment (lib, "WS2_32.LIB")
 
-const short SERVER_PORT = 4000;
-const int BUFSIZE = 256;
+std::unordered_map<int, std::shared_ptr<Session>> g_sessions;   // id와 session 정보를 가진 unordered_map 컨테이너로 관리
 
-bool g_is_running = true;
-CRITICAL_SECTION g_cs;
-
-void err_disp(const char* msg, int err_no) {
-  WCHAR* h_mess;
-  FormatMessage(
-    FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
-    NULL, err_no,
-    MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-    (LPWSTR)&h_mess, 0, NULL);
-  cout << msg;
-  wcout << L"  에러 => " << h_mess << endl;
-  while (true);
-  LocalFree(h_mess);
+void err_disp(const char* msg, int err_no)
+{
+    WCHAR* h_mess;
+    FormatMessage(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
+        NULL, err_no,
+        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+        (LPWSTR)&h_mess, 0, NULL);
+    std::cout << msg;
+    wcout << L"  에러 => " << h_mess << endl;
+    while (true);
+    LocalFree(h_mess);
 }
 
-bool IsRunning() {
-  EnterCriticalSection(&g_cs);
-  bool running = g_is_running;
-  LeaveCriticalSection(&g_cs);
-  return running;
+int main()
+{
+    wcout.imbue(std::locale("korean"));
+
+    WSADATA WSAData;
+    WSAStartup(MAKEWORD(2, 0), &WSAData);
+
+    SOCKET server_socket = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+    SOCKADDR_IN server_addr = {};
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(SERVER_PORT);
+    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    if (bind(server_socket, reinterpret_cast<sockaddr*>(&server_addr), sizeof(server_addr)) == SOCKET_ERROR)
+    {
+        std::cout << "[Error] bind 실패: " << WSAGetLastError() << std::endl;
+        return 1;
+    }
+    if (listen(server_socket, SOMAXCONN) == SOCKET_ERROR)
+    {
+        std::cout << "[Error] listen 실패: " << WSAGetLastError() << std::endl;
+        return 1;
+    }
+
+    // accept
+    while (true)
+    {
+        SOCKADDR_IN cl_addr = {};
+        int addr_size = sizeof(SOCKADDR_IN);
+
+        SOCKET client_socket = WSAAccept(server_socket, reinterpret_cast<sockaddr*>(&cl_addr), &addr_size, NULL, NULL);
+
+        if (client_socket == INVALID_SOCKET)
+        {
+            std::cout << "[Error] accept 실패: " << WSAGetLastError() << std::endl;
+            continue;
+        }
+
+        // id 부여
+        int id = -1;
+        for (int i = 0; i < 10; ++i)
+        {
+            if (!g_sessions[i])
+            {
+                id = i;
+                break;
+            }
+        }
+
+        if (id == -1)
+        {
+            std::cout << "서버 가득 참" << std::endl;
+            closesocket(client_socket);
+            continue;
+        }
+
+        auto new_session = std::make_shared<Session>(id, client_socket);
+        new_session->Init();
+        g_sessions[id] = new_session;
+        new_session->do_recv();
+
+        SleepEx(100, true);
+
+        std::cout << "클라이언트 접속 [id: " << id << "]" << std::endl;
+    }
+
+    closesocket(server_socket);
+    WSACleanup();
+    return 0;;
 }
 
-DWORD WINAPI ClientWorker(LPVOID lpParam) {
-  Player* player = static_cast<Player*>(lpParam);
-  SOCKET sock = player->socket();
+// 패킷 처리
+void process_packet(std::shared_ptr<Session> session, char* buf)
+{
+    char type = buf[1];
 
-  while (IsRunning()) {
-    KeyPacket key_packet = {};
-    char* buf = reinterpret_cast<char*>(&key_packet);
-    int total_received = 0;
-    int packet_size = sizeof(KeyPacket);
-    bool disconnected = false;
-
-    // recv
-    while (total_received < packet_size) {
-      WSABUF recv_buf = { packet_size - total_received, buf + total_received };
-      DWORD recv_bytes = 0, flags = 0;
-      int result = WSARecv(sock, &recv_buf, 1, &recv_bytes, &flags, nullptr, nullptr);
-
-      if (result == SOCKET_ERROR) {
-        std::cout << "[Error] WSARecv 오류: " << WSAGetLastError() << std::endl;
-        disconnected = true;
+    switch (type)
+    {
+    case CS_LOGIN: {
+        // 기존 플레이어 정보 새 클라이언트에게 전송
+        for (auto& pair : g_sessions)
+        {
+            if (pair.first == session->id()) continue;
+            SC_ENTER_PACKET enter;
+            enter.id = pair.first;
+            enter.x = pair.second->player()->x();
+            enter.y = pair.second->player()->y();
+            session->do_send(reinterpret_cast<char*>(&enter));
+        }
+        // 모든 클라이언트에게 새 플레이어 알림
+        SC_ENTER_PACKET enter;
+        enter.id = session->id();
+        enter.x = session->player()->x();
+        enter.y = session->player()->y();
+        for (auto& pair : g_sessions)
+            pair.second->do_send(reinterpret_cast<char*>(&enter));
         break;
-      }
-      if (recv_bytes == 0) {
-        std::cout << "[Info] 클라이언트 연결 종료" << std::endl;
-        disconnected = true;
+    }
+    case CS_KEY: {
+        CS_KEY_PACKET* packet = reinterpret_cast<CS_KEY_PACKET*>(buf);
+        session->player()->UpdatePosition(packet->move_dir);
+
+        SC_MOVE_PACKET move;
+        move.id = session->id();
+        move.x = session->player()->x();
+        move.y = session->player()->y();
+        for (auto& pair : g_sessions)
+            pair.second->do_send(reinterpret_cast<char*>(&move));
         break;
-      }
-      total_received += recv_bytes;
     }
-
-    if (disconnected) break;
-
-    player->UpdatePosition(key_packet.move_dir);
-    PosPacket pos_packet = player->pos();
-
-    // send
-    WSABUF send_buf = { sizeof(PosPacket), reinterpret_cast<char*>(&pos_packet) };
-    DWORD sent_bytes = 0;
-    int send_result = WSASend(sock, &send_buf, 1, &sent_bytes, 0, nullptr, nullptr);
-    if (send_result == SOCKET_ERROR) {
-      std::cout << "[Error] WSASend 오류: " << WSAGetLastError() << std::endl;
-      break;
+    case CS_LOGOUT: {
+        SC_LOGOUT_PACKET logout;
+        logout.id = session->id();
+        for (auto& pair : g_sessions)
+            pair.second->do_send(reinterpret_cast<char*>(&logout));
+        g_sessions.erase(session->id());
+        break;
     }
-    std::cout << "New Pos: " << pos_packet.x << ", " << pos_packet.y << std::endl;
-  }
-
-  closesocket(sock);
-  delete player;
-  return 0;
+    }
 }
 
-int main() {
-  wcout.imbue(std::locale("korean"));
-  InitializeCriticalSection(&g_cs);
+// recv가 다 되면 호출
+void recv_callback(DWORD err, DWORD num_bytes, LPWSAOVERLAPPED over, DWORD flags)
+{
+    if (err != 0 || num_bytes == 0)
+    {
+        size_t s_id = reinterpret_cast<size_t>(over->hEvent);
 
-  WSADATA WSAData;
-  WSAStartup(MAKEWORD(2, 0), &WSAData);
+        SC_LOGOUT_PACKET logout;
+        logout.id = s_id;
 
-  SOCKET server_socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0, 0, 0);
-  SOCKADDR_IN server_addr = {};
-  server_addr.sin_family = AF_INET;
-  server_addr.sin_port = htons(SERVER_PORT);
-  server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        for (auto& pair : g_sessions)
+        {
+            pair.second->do_send(reinterpret_cast<char*>(&logout));
+        }
 
-  if (bind(server_socket, reinterpret_cast<sockaddr*>(&server_addr), sizeof(server_addr)) == SOCKET_ERROR) {
-    std::cout << "[Error] bind 실패: " << WSAGetLastError() << std::endl;
-    return 1;
-  }
-  if (listen(server_socket, SOMAXCONN) == SOCKET_ERROR) {
-    std::cout << "[Error] listen 실패: " << WSAGetLastError() << std::endl;
-    return 1;
-  }
-
-  // accept
-  while (IsRunning()) {
-    int addr_size = sizeof(sockaddr_in);
-    SOCKET client_socket = accept(server_socket, nullptr, &addr_size);
-
-    if (client_socket == INVALID_SOCKET) {
-      std::cout << "[Error] accept 실패: " << WSAGetLastError() << std::endl;
-      continue;
+        g_sessions.erase(s_id);
+        return;
     }
 
-    std::cout << "클라이언트 접속" << std::endl;
+    // over가 EXP_OVER의 첫번쨰 멤버라서 바로 캐스팅이 가능
+    size_t  s_id = reinterpret_cast<size_t>(over->hEvent);
+    auto it = g_sessions.find(static_cast<int>(s_id));
+    if (it == g_sessions.end()) return;
+    auto session = it->second;
 
-    Player* player = new Player(client_socket);
+    // send와 독립적으로 실행..
+    session->do_recv();
 
-    HANDLE hThread = CreateThread(nullptr, 0, ClientWorker, player, 0, nullptr);
-
-    if (hThread == nullptr) {
-      std::cout << "[Error] 스레드 생성 실패" << std::endl;
-      closesocket(client_socket);
-      delete player;
-    } else {
-      CloseHandle(hThread);
-    }
-  }
-
-  closesocket(server_socket);
-  DeleteCriticalSection(&g_cs);
-  WSACleanup();
-  return 0;;
+    process_packet(session, session->exp_over().send_msg_);
 }
 
-
-
+// send 버퍼에 있던 데이터가 다 전송되면 호출
+void send_callback(DWORD err, DWORD num_bytes, LPWSAOVERLAPPED over, DWORD flags)
+{
+    EXP_OVER* ex_over = reinterpret_cast<EXP_OVER*>(over);
+    delete over;
+}

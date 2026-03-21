@@ -2,30 +2,43 @@
 #define PLAYER_H_
 
 #include <winsock2.h>
+#include <memory>
 #include "common.h"
 
-class Player {
+#include "Session.h"
+
+class Session;
+
+class Player
+{
 public:
-  Player(SOCKET socket) : socket_(socket) {
-    InitializeCriticalSection(&cs_);
-  }
-  ~Player() {
-    if (socket_ != INVALID_SOCKET) {
-      closesocket(socket_);
+    Player(int id) : id_(id)
+    {
+        x_ = 0;
+        y_ = 0;
     }
-    DeleteCriticalSection(&cs_);
-  }
 
-  SOCKET socket() const { return socket_; }
-  PosPacket pos() const { return pos_; };
+    ~Player() = default;
 
-  void UpdatePosition(PlayerMoveDir dir);
+    Player(const Player&) = delete;
+    Player& operator=(const Player&) = delete;
 
+    void SetSession(std::shared_ptr<Session> session)
+    {
+        session_ = session;
+    }
+
+    void UpdatePosition(PlayerMoveDir dir);
+
+    int id() const { return id_; }
+    int x() const { return x_; }
+    int y() const { return y_; }
 
 private:
-  SOCKET socket_ = INVALID_SOCKET;
-  PosPacket pos_{};
-  CRITICAL_SECTION cs_;
+    int id_ = -1;
+    int x_;
+    int y_;
+    std::weak_ptr<Session> session_;
 };
 
 #endif  // PLAYER_H_
