@@ -3,6 +3,9 @@
 
 #pragma pack(push, 1)
 
+#include "Player.h"
+#include <unordered_map>
+
 enum class PlayerMoveDir : unsigned char {
   kNone = 0,
   kUp,
@@ -11,14 +14,7 @@ enum class PlayerMoveDir : unsigned char {
   kRight
 };
 
-struct KeyPacket {
-  PlayerMoveDir move_dir;
-};
 
-struct PosPacket {
-  int x;
-  int y;
-};
 
 #pragma pack(pop)
 

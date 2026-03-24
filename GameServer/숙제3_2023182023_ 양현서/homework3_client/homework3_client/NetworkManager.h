@@ -8,6 +8,7 @@
 
 #include "stdafx.h"
 #include "Common.h"
+#include "Protocol.h"
 
 class NetworkManager {
 public:
@@ -35,7 +36,7 @@ private:
   SOCKET socket_ = INVALID_SOCKET;
   CRITICAL_SECTION cs_;
 
-  KeyPacket pending_packet_ = {};
+  CS_KEY_PACKET pending_packet_ = {};
   bool has_pending_ = false;
 
   bool is_running_ = false;

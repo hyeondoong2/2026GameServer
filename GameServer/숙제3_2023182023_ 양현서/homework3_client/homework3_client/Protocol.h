@@ -3,7 +3,6 @@
 #define SC_ENTER   1
 #define SC_MOVE    2
 #define SC_LOGOUT  3
-#define SC_REJECT  4
 
 #define CS_LOGIN   1
 #define CS_KEY     2

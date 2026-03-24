@@ -70,7 +70,7 @@ int main()
         int id = -1;
         for (int i = 0; i < 10; ++i)
         {
-            if (!g_sessions[i])
+            if (g_sessions.count(i) == 0)
             {
                 id = i;
                 break;
@@ -86,12 +86,12 @@ int main()
 
         auto new_session = std::make_shared<Session>(id, client_socket);
         new_session->Init();
-        g_sessions[id] = new_session;
+        g_sessions.insert({ id, new_session });
         new_session->do_recv();
 
-        SleepEx(100, true);
-
         std::cout << "클라이언트 접속 [id: " << id << "]" << std::endl;
+
+        SleepEx(100, true);
     }
 
     closesocket(server_socket);
@@ -161,7 +161,10 @@ void recv_callback(DWORD err, DWORD num_bytes, LPWSAOVERLAPPED over, DWORD flags
 
         for (auto& pair : g_sessions)
         {
-            pair.second->do_send(reinterpret_cast<char*>(&logout));
+            if (pair.first != s_id)
+            {
+                pair.second->do_send(reinterpret_cast<char*>(&logout));
+            }
         }
 
         g_sessions.erase(s_id);

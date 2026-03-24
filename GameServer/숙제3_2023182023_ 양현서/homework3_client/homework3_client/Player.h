@@ -3,34 +3,26 @@
 
 #include "stdafx.h"
 
-class Player {
+class Player
+{
 public:
-  // 일단 플레이어도 하나니까 싱글톤으로..
-  static Player& Instance();
+    void Init();
+    void SetPos(int x, int y);
+    void Render(HDC hdc);
+    void SetID(int id) { id_ = id; }
 
-  void Init();
-  void SetPos(int x, int y);
-  void Render(HDC hdc);
+    Player() = default;
+    Player(int x, int y) :x_(x), y_(y) { Init(); };
+    ~Player() = default;
 
 private:
-  Player() = default;
-  ~Player() = default;
 
-  friend std::default_delete<Player>;
+    int x_ = 0;
+    int y_ = 0;
+    int size_ = 0;
+    int id_ = -1;
 
-  // 복사 및 이동 방지
-  Player(const Player&) = delete;
-  Player& operator=(const Player&) = delete;
-  Player(Player&&) = delete;
-  Player& operator=(Player&&) = delete;
-
-  static std::unique_ptr<Player> instance_;
-
-  int x_ = 0;
-  int y_ = 0;
-  int size_ = 0;
-
-  CImage player_image_;
+    CImage player_image_;
 };
 
 #endif  // PLAYER_H_
