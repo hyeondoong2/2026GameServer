@@ -1,9 +1,9 @@
 #pragma once
 
 constexpr short PORT = 3500;
-constexpr int WORLD_WIDTH = 8;
-constexpr int WORLD_HEIGHT = 8;
-constexpr int MAX_PLAYERS = 10;
+constexpr int WORLD_WIDTH = 400;
+constexpr int WORLD_HEIGHT = 400;
+constexpr int MAX_PLAYERS = 5000;
 constexpr int MAX_NAME_LEN = 20;
 
 enum PACKET_TYPE { C2S_LOGIN, C2S_MOVE, S2C_LOGIN_RESULT, S2C_AVATAR_INFO, S2C_ADD_PLAYER, S2C_REMOVE_PLAYER, S2C_MOVE_PLAYER };
@@ -22,6 +22,7 @@ struct C2S_Move
 	unsigned char size;
 	PACKET_TYPE   type;
 	DIRECTION    dir;
+	int move_time; // in milliseconds
 };
 
 struct S2C_LoginResult
@@ -65,5 +66,6 @@ struct S2C_MovePlayer
 	int playerId;
 	short x;
 	short y;
+	int move_time; // in milliseconds
 };
 #pragma pack(pop) // Restore default packing

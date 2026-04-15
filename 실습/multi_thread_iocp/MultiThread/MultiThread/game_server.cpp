@@ -10,8 +10,6 @@
 
 #pragma comment(lib, "MSWSock.lib")
 #pragma comment(lib, "WS2_32.lib")
-using namespace std;
-
 constexpr int BUF_SIZE = 200;
 
 std::atomic<int> player_index = 0;
@@ -170,7 +168,7 @@ void SESSION::process_packet(unsigned char* p)
     case C2S_LOGIN: {
         C2S_Login* packet = reinterpret_cast<C2S_Login*>(p);
         strncpy_s(m_username, packet->username, MAX_NAME_LEN);
-        cout << "Player[" << m_id << "] logged in as " << m_username << endl;
+        //std::cout << "Player[" << m_id << "] logged in as " << m_username << std::endl;
         send_avatar_info();
     }
                   break;
@@ -184,7 +182,7 @@ void SESSION::process_packet(unsigned char* p)
         case LEFT: m_x = max(0, m_x - 1); break;
         case RIGHT: m_x = min(WORLD_WIDTH - 1, m_x + 1); break;
         }
-        cout << "Player[" << m_id << "] moved to (" << m_x << ", " << m_y << ")\n";
+        std::cout << "Player[" << m_id << "] moved to (" << m_x << ", " << m_y << ")\n";
 
         for (auto& pair : g_clients)
         {
@@ -197,7 +195,7 @@ void SESSION::process_packet(unsigned char* p)
     }
                  break;
     default:
-        cout << "Unknown packet type received from player[" << m_id << "].\n";
+        std::cout << "Unknown packet type received from player[" << m_id << "].\n";
         break;
     }
 }
@@ -253,14 +251,14 @@ void worker_thread()
         {
         case IO_ACCEPT:
         {
-            cout << "Client connected." << endl;
+            std::cout << "Client connected." << std::endl;
 
             int player_id = player_index++;
             SOCKET client_socket = exp_over->m_client_socket;
 
             if (MAX_PLAYERS <= g_clients.size())
             {
-                cout << "No more player can be accepted." << endl;
+                std::cout << "No more player can be accepted." << std::endl;
                 send_login_fail(exp_over->m_client_socket, "Server is full.");
                 closesocket(exp_over->m_client_socket);
             } else
@@ -312,7 +310,9 @@ void worker_thread()
             EXP_OVER* next_accept_over = new EXP_OVER(IO_ACCEPT);
             next_accept_over->m_client_socket = next_socket;
 
-            AcceptEx(server, next_socket, &next_accept_over->m_buff, 0,
+            CreateIoCompletionPort((HANDLE)next_socket, h_iocp, 0, 0);
+
+            AcceptEx(server, next_socket, next_accept_over->m_buff, 0,
                 sizeof(SOCKADDR_IN) + 16, sizeof(SOCKADDR_IN) + 16,
                 NULL, &next_accept_over->m_over);
 
@@ -349,9 +349,9 @@ void worker_thread()
                 continue;
             }
 
-            cout << "Client[" << player_index << "] sent a message." << endl;
+            std::cout << "Client[" << player_id << "] sent a message." << std::endl;
 
-            auto it = g_clients.find(player_index);
+            auto it = g_clients.find(player_id);
             std::shared_ptr<SESSION> session = it->second.load();
 
             unsigned char* p = reinterpret_cast<unsigned char*>(exp_over->m_buff);
@@ -373,13 +373,13 @@ void worker_thread()
         }
         break;
         case IO_SEND: {
-            cout << "Message sent. to client[" << key << "]\n";
+            //std::cout << "Message sent. to client[" << key << "]\n";
             EXP_OVER* o = reinterpret_cast<EXP_OVER*>(over);
             delete o;
         }
                     break;
         default:
-            cout << "Unknown IO type." << endl;
+            std::cout << "Unknown IO type." << std::endl;
             exit(-1);
             break;
         }
@@ -399,6 +399,7 @@ int main()
     server_addr.sin_addr.S_un.S_addr = INADDR_ANY;
     bind(server, reinterpret_cast<sockaddr*>(&server_addr), sizeof(server_addr));
     listen(server, SOMAXCONN);
+
     h_iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
 
     // 서버 소켓 iocp에 등록
@@ -411,15 +412,15 @@ int main()
     accept_over->m_client_socket = accept_socket;
 
     // new로 만든 EXP_OVER를 AcceptEX 로 낚싯대를 던져둠
-    AcceptEx(server, accept_socket, &accept_over->m_buff, 0,
+    AcceptEx(server, accept_socket, accept_over->m_buff, 0,
         sizeof(SOCKADDR_IN) + 16, sizeof(SOCKADDR_IN) + 16,
         &bytes, &accept_over->m_over);
 
     // 스레드를 담을 벡터 
-    vector <thread> worker_threads;
+    std::vector<std::thread> worker_threads;
 
     // 현재 컴퓨터의 CPU 코어 개수를 가져와서 가장 효율적인 스레드 수를 계산한다
-    int num_threads = thread::hardware_concurrency();
+    int num_threads = std::thread::hardware_concurrency();
 
     // 스레드를 생성하고, worker_thread 함수 실행
     for (int i = 0; i < num_threads; ++i)
