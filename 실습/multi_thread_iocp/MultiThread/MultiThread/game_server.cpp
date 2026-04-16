@@ -70,6 +70,7 @@ public:
     // data race
     char m_username[MAX_NAME_LEN];
     short m_x, m_y;
+    int m_move_time;
 
     SESSION()
     {
@@ -80,8 +81,10 @@ public:
     {
         m_state = CS_CONNECT;
         m_recv_over.m_iotype = IO_RECV;
-        m_x = 0; 		m_y = 0;
+        m_x = rand() % WORLD_WIDTH;
+        m_y = rand() % WORLD_HEIGHT;
         m_prev_recv = 0;
+        m_move_time = 0;
     }
     ~SESSION()
     {
@@ -101,6 +104,7 @@ public:
         memcpy(o->m_buff, mess, num_bytes);
         WSASend(m_client, &o->m_wsa, 1, 0, 0, &o->m_over, nullptr);
     }
+    void do_move(DIRECTION dir);
     void send_avatar_info()
     {
         S2C_AvatarInfo packet;
@@ -175,28 +179,34 @@ void SESSION::process_packet(unsigned char* p)
     case C2S_MOVE: {
         C2S_Move* packet = reinterpret_cast<C2S_Move*>(p);
         DIRECTION dir = packet->dir;
-        switch (dir)
-        {
-        case UP: m_y = max(0, m_y - 1); break;
-        case DOWN: m_y = min(WORLD_HEIGHT - 1, m_y + 1); break;
-        case LEFT: m_x = max(0, m_x - 1); break;
-        case RIGHT: m_x = min(WORLD_WIDTH - 1, m_x + 1); break;
-        }
-        std::cout << "Player[" << m_id << "] moved to (" << m_x << ", " << m_y << ")\n";
-
-        for (auto& pair : g_clients)
-        {
-            std::shared_ptr<SESSION> cl = pair.second.load();
-            if (cl->m_state == CS_CONNECT)
-            {
-                cl->send_move_packet(m_id);
-            }
-        }
+        m_move_time = packet->move_time;
+        do_move(dir);
     }
                  break;
     default:
         std::cout << "Unknown packet type received from player[" << m_id << "].\n";
         break;
+    }
+}
+
+void SESSION::do_move(DIRECTION dir)
+{
+    switch (dir)
+    {
+    case UP: m_y = max(0, m_y - 1); break;
+    case DOWN: m_y = min(WORLD_HEIGHT - 1, m_y + 1); break;
+    case LEFT: m_x = max(0, m_x - 1); break;
+    case RIGHT: m_x = min(WORLD_WIDTH - 1, m_x + 1); break;
+    }
+    //std::cout << "Player[" << m_id << "] moved to (" << m_x << ", " << m_y << ")\n";
+
+    for (auto& pair : g_clients)
+    {
+        std::shared_ptr<SESSION> cl = pair.second.load();
+        if (cl->m_state == CS_CONNECT)
+        {
+            cl->send_move_packet(m_id);
+        }
     }
 }
 
@@ -211,6 +221,7 @@ void SESSION::send_move_packet(int mover)
     packet.playerId = mover;
     packet.x = client->m_x;
     packet.y = client->m_y;
+    packet.move_time = client->m_move_time;
     do_send(packet.size, reinterpret_cast<char*>(&packet));
 }
 
@@ -251,66 +262,58 @@ void worker_thread()
         {
         case IO_ACCEPT:
         {
-            std::cout << "Client connected." << std::endl;
+           // std::cout << "Client connected." << std::endl;
 
             int player_id = player_index++;
             SOCKET client_socket = exp_over->m_client_socket;
 
-            if (MAX_PLAYERS <= g_clients.size())
+
+
+            CreateIoCompletionPort((HANDLE)client_socket, h_iocp, player_id, 0);
+
+            // 컨테이너에서 해당 id를 가진 위치 (이터레이터) 찾기
+            auto it = g_clients.find(player_id);
+
+            if (it == g_clients.end())
             {
-                std::cout << "No more player can be accepted." << std::endl;
-                send_login_fail(exp_over->m_client_socket, "Server is full.");
-                closesocket(exp_over->m_client_socket);
-            } else
-            {
-                CreateIoCompletionPort((HANDLE)client_socket, h_iocp, player_id, 0);
+                auto new_session = std::make_shared<SESSION>(client_socket, player_id);
+                new_session->m_id = player_id;
+                g_clients[player_id].store(new_session);
 
-                // 컨테이너에서 해당 id를 가진 위치 (이터레이터) 찾기
-                auto it = g_clients.find(player_id);
-
-                if (it == g_clients.end())
-                {
-                    auto new_session = std::make_shared<SESSION>(client_socket, player_id);
-                    new_session->m_id = player_id;
-                    g_clients[player_id].store(new_session);
-
-                    it = g_clients.find(player_id);
-                }
-
-                std::shared_ptr<SESSION> session = it->second.load();
-
-                session->m_state = CS_CONNECT;
-                session->m_client = client_socket;
-                session->m_x = 0;
-                session->m_y = 0;
-                session->m_id = player_id;
-                session->m_prev_recv = 0;
-
-                session->send_login_success();
-
-                for (auto& pair : g_clients)
-                {
-                    std::shared_ptr<SESSION> other_session = pair.second.load();
-
-                    if (CS_CONNECT != other_session->m_state) continue;
-                    if (other_session->m_id == player_id) continue;
-
-                    // 기존 유저에게 내 정보 보내기
-                    other_session->send_add_player(player_id);
-
-                    // 나에게(session) 기존 유저 정보 보내기
-                    session->send_add_player(other_session->m_id);
-                }
-
-                session->do_recv();
+                it = g_clients.find(player_id);
             }
+
+            std::shared_ptr<SESSION> session = it->second.load();
+
+            //session->m_state = CS_CONNECT;
+            //session->m_client = client_socket;
+            //session->m_x = 0;
+            //session->m_y = 0;
+            //session->m_id = player_id;
+            //session->m_prev_recv = 0;
+
+            session->send_login_success();
+
+            for (auto& pair : g_clients)
+            {
+                std::shared_ptr<SESSION> other_session = pair.second.load();
+
+                if (CS_CONNECT != other_session->m_state) continue;
+                if (other_session->m_id == player_id) continue;
+
+                // 기존 유저에게 내 정보 보내기
+                other_session->send_add_player(player_id);
+
+                // 나에게(session) 기존 유저 정보 보내기
+                session->send_add_player(other_session->m_id);
+            }
+
+            session->do_recv();
 
             // 다음 접속자를 받기 위해 다시 AcceptEX를 던짐
             SOCKET next_socket = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
             EXP_OVER* next_accept_over = new EXP_OVER(IO_ACCEPT);
             next_accept_over->m_client_socket = next_socket;
-
-            CreateIoCompletionPort((HANDLE)next_socket, h_iocp, 0, 0);
 
             AcceptEx(server, next_socket, next_accept_over->m_buff, 0,
                 sizeof(SOCKADDR_IN) + 16, sizeof(SOCKADDR_IN) + 16,
@@ -326,7 +329,7 @@ void worker_thread()
 
             if (num_bytes == 0)
             {
-                std::cout << "client[" << key << "] Disconnected. (Graceful)\n";
+                //std::cout << "client[" << key << "] Disconnected. (Graceful)\n";
 
                 auto it = g_clients.find(player_id);
                 if (it != g_clients.end())
@@ -349,7 +352,7 @@ void worker_thread()
                 continue;
             }
 
-            std::cout << "Client[" << player_id << "] sent a message." << std::endl;
+            //std::cout << "Client[" << player_id << "] sent a message." << std::endl;
 
             auto it = g_clients.find(player_id);
             std::shared_ptr<SESSION> session = it->second.load();
