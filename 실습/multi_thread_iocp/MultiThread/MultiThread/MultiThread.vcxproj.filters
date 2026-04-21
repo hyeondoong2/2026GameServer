@@ -18,6 +18,12 @@
     <ClCompile Include="game_server.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
+    <ClCompile Include="view_server.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="view_server_sector.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="protocol.h">

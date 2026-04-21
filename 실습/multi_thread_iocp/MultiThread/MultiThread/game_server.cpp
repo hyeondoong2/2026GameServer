@@ -247,7 +247,8 @@ void worker_thread()
         ULONG_PTR key;
         LPOVERLAPPED over;
 
-        GetQueuedCompletionStatus(h_iocp, &num_bytes, &key, &over, INFINITE);
+        
+        (h_iocp, &num_bytes, &key, &over, INFINITE);
 
         // 종료 및 에러 처리
         if (over == nullptr)
