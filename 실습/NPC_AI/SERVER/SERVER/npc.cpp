@@ -776,8 +776,8 @@ int main()
 	server_addr.sin_family = AF_INET;
 	server_addr.sin_port = htons(PORT);
 	server_addr.sin_addr.S_un.S_addr = INADDR_ANY;
-	bind(g_s_socket, reinterpret_cast<sockaddr*>(&server_addr), sizeof(server_addr));
-	listen(g_s_socket, SOMAXCONN);
+	::bind(g_s_socket, reinterpret_cast<sockaddr*>(&server_addr), sizeof(server_addr));
+	::listen(g_s_socket, SOMAXCONN);
 	SOCKADDR_IN cl_addr;
 	int addr_size = sizeof(cl_addr);
 

@@ -14,15 +14,28 @@ constexpr auto SCREEN_WIDTH = 16;
 constexpr auto SCREEN_HEIGHT = 16;
 
 constexpr auto TILE_WIDTH = 65;
-constexpr auto WINDOW_WIDTH = SCREEN_WIDTH * TILE_WIDTH;   // size of window
+constexpr auto WINDOW_WIDTH = SCREEN_WIDTH * TILE_WIDTH;
 constexpr auto WINDOW_HEIGHT = SCREEN_WIDTH * TILE_WIDTH;
 
 int g_left_x;
 int g_top_y;
 int g_myid;
+int g_my_hp;
+int g_my_max_hp;
 
 sf::RenderWindow* g_window;
 sf::Font g_font;
+
+// NPC ID를 내부 인덱스로 변환
+int from_protocol_id(int protocol_id)
+{
+	if (protocol_id < MAX_PLAYERS) {
+		return protocol_id;
+	}
+	else {
+		return NPC_ID_START - 1000000 + protocol_id;
+	}
+}
 
 class OBJECT {
 private:
@@ -35,20 +48,31 @@ private:
 public:
 	int id;
 	int m_x, m_y;
-	char name[NAME_SIZE];
+	int m_hp, m_max_hp;
+	unsigned long long m_exp;
+	unsigned char m_level;
+	char name[MAX_NAME_LEN];
 	OBJECT(sf::Texture& t, int x, int y, int x2, int y2) {
 		m_showing = false;
 		m_sprite.setTexture(t);
 		m_sprite.setTextureRect(sf::IntRect(x, y, x2, y2));
 		set_name("NONAME");
 		m_mess_end_time = chrono::system_clock::now();
+		m_hp = 0;
+		m_max_hp = 0;
+		m_exp = 0;
+		m_level = 0;
 	}
 	OBJECT() {
 		m_showing = false;
+		m_hp = 0;
+		m_max_hp = 0;
+		m_exp = 0;
+		m_level = 0;
 	}
 	void show()
 	{
-		m_showing = true;
+		m_showing = true;		
 	}
 	void hide()
 	{
@@ -67,6 +91,17 @@ public:
 		m_x = x;
 		m_y = y;
 	}
+
+	void set_hp(int hp, int max_hp) {
+		m_hp = hp;
+		m_max_hp = max_hp;
+	}
+
+	void set_stats(unsigned long long exp, unsigned char level) {
+		m_exp = exp;
+		m_level = level;
+	}
+
 	void draw() {
 		if (false == m_showing) return;
 		float rx = (m_x - g_left_x) * 65.0f + 1;
@@ -86,7 +121,7 @@ public:
 	void set_name(const char str[]) {
 		m_name.setFont(g_font);
 		m_name.setString(str);
-		if (id < MAX_USER) m_name.setFillColor(sf::Color(255, 255, 255));
+		if (id < NPC_ID_START) m_name.setFillColor(sf::Color(255, 255, 255));
 		else m_name.setFillColor(sf::Color(255, 255, 0));
 		m_name.setStyle(sf::Text::Bold);
 	}
@@ -132,92 +167,151 @@ void client_finish()
 	delete pieces;
 }
 
-void ProcessPacket(char* ptr)
+void ProcessPacket(char* ptr)		
 {
-	static bool first_time = true;
-	switch (ptr[1])
+	unsigned char packet_type = ptr[1];
+	
+	switch (packet_type)
 	{
-	case SC_LOGIN_INFO:
+	case S2C_LOGIN_RESULT:
 	{
-		SC_LOGIN_INFO_PACKET * packet = reinterpret_cast<SC_LOGIN_INFO_PACKET*>(ptr);
-		g_myid = packet->id;
+		S2C_LoginResult* packet = reinterpret_cast<S2C_LoginResult*>(ptr);
+		if (packet->success) {
+			cout << "Login successful: " << packet->message << endl;
+		}
+		else {
+			cout << "Login failed: " << packet->message << endl;
+		}
+		break;
+	}
+
+	case S2C_AVATAR_INFO:
+	{
+		S2C_AvatarInfo* packet = reinterpret_cast<S2C_AvatarInfo*>(ptr);
+		g_myid = packet->playerId;
 		avatar.id = g_myid;
 		avatar.move(packet->x, packet->y);
+		avatar.set_hp(packet->hp, packet->max_hp);
+		avatar.set_stats(packet->exp, packet->level);
 		g_left_x = packet->x - SCREEN_WIDTH / 2;
 		g_top_y = packet->y - SCREEN_HEIGHT / 2;
 		avatar.show();
+		g_my_hp = packet->hp;
+		g_my_max_hp = packet->max_hp;
+		cout << "Avatar initialized at (" << packet->x << ", " << packet->y << ")" << endl;
+		break;
 	}
-	break;
 
-	case SC_ADD_OBJECT:
+	case S2C_ADD_OBJECT:
 	{
-		SC_ADD_OBJECT_PACKET* my_packet = reinterpret_cast<SC_ADD_OBJECT_PACKET*>(ptr);
-		int id = my_packet->id;
+		S2C_AddObject* my_packet = reinterpret_cast<S2C_AddObject*>(ptr);
+		int protocol_id = my_packet->object_id;
 
-		if (id == g_myid) {
+		if (protocol_id == g_myid) {
 			avatar.move(my_packet->x, my_packet->y);
+			avatar.set_hp(my_packet->hp, my_packet->max_hp);
+			avatar.set_stats(my_packet->exp, my_packet->level);
 			g_left_x = my_packet->x - SCREEN_WIDTH / 2;
 			g_top_y = my_packet->y - SCREEN_HEIGHT / 2;
 			avatar.show();
 		}
-		else if (id < MAX_USER) {
-			players[id] = OBJECT{ *pieces, 0, 0, 64, 64 };
-			players[id].id = id;
-			players[id].move(my_packet->x, my_packet->y);
-			players[id].set_name(my_packet->name);
-			players[id].show();
+		else if (protocol_id < NPC_ID_START) {
+			players[protocol_id] = OBJECT{ *pieces, 0, 0, 64, 64 };
+			players[protocol_id].id = protocol_id;
+			players[protocol_id].move(my_packet->x, my_packet->y);
+			players[protocol_id].set_hp(my_packet->hp, my_packet->max_hp);
+			players[protocol_id].set_stats(my_packet->exp, my_packet->level);
+			players[protocol_id].set_name(my_packet->obj_name);
+			players[protocol_id].show();
+			cout << "Player added: " << my_packet->obj_name << " at (" << my_packet->x << ", " << my_packet->y << ")" << endl;
 		}
 		else {
-			players[id] = OBJECT{ *pieces, 256, 0, 64, 64 };
-			players[id].id = id;
-			players[id].move(my_packet->x, my_packet->y);
-			players[id].set_name(my_packet->name);
-			players[id].show();
-		}
-		break;
-	}
-	case SC_MOVE_OBJECT:
-	{
-		SC_MOVE_OBJECT_PACKET* my_packet = reinterpret_cast<SC_MOVE_OBJECT_PACKET*>(ptr);
-		int other_id = my_packet->id;
-		if (other_id == g_myid) {
-			avatar.move(my_packet->x, my_packet->y);
-			g_left_x = my_packet->x - SCREEN_WIDTH/2;
-			g_top_y = my_packet->y - SCREEN_HEIGHT/2;
-		}
-		else {
-			players[other_id].move(my_packet->x, my_packet->y);
+			players[protocol_id] = OBJECT{ *pieces, 256, 0, 64, 64 };
+			players[protocol_id].id = protocol_id;
+			players[protocol_id].move(my_packet->x, my_packet->y);
+			players[protocol_id].set_hp(my_packet->hp, my_packet->max_hp);
+			players[protocol_id].set_stats(my_packet->exp, my_packet->level);
+			players[protocol_id].set_name(my_packet->obj_name);
+			players[protocol_id].show();
+			cout << "NPC added: " << my_packet->obj_name << " at (" << my_packet->x << ", " << my_packet->y << ")" << endl;
 		}
 		break;
 	}
 
-	case SC_REMOVE_OBJECT:
+	case S2C_MOVE_OBJECT:
 	{
-		SC_REMOVE_OBJECT_PACKET* my_packet = reinterpret_cast<SC_REMOVE_OBJECT_PACKET*>(ptr);
-		int other_id = my_packet->id;
-		if (other_id == g_myid) {
+		S2C_MoveObject* my_packet = reinterpret_cast<S2C_MoveObject*>(ptr);
+		int protocol_id = my_packet->object_id;
+		
+		if (protocol_id == g_myid) {
+			avatar.move(my_packet->x, my_packet->y);
+			g_left_x = my_packet->x - SCREEN_WIDTH / 2;
+			g_top_y = my_packet->y - SCREEN_HEIGHT / 2;
+		}
+		else {
+			if (players.find(protocol_id) != players.end()) {
+				players[protocol_id].move(my_packet->x, my_packet->y);
+			}
+		}
+		break;
+	}
+
+	case S2C_REMOVE_OBJECT:
+	{
+		S2C_RemoveObject* my_packet = reinterpret_cast<S2C_RemoveObject*>(ptr);
+		int protocol_id = my_packet->object_id;
+		
+		if (protocol_id == g_myid) {
 			avatar.hide();
 		}
 		else {
-			players.erase(other_id);
+			auto it = players.find(protocol_id);
+			if (it != players.end()) {
+				cout << "Removing object: " << protocol_id << endl;
+				players.erase(it);
+			}
 		}
 		break;
 	}
-	case SC_CHAT:
+
+	case S2C_CHAT_MESSAGE:
 	{
-		SC_CHAT_PACKET* my_packet = reinterpret_cast<SC_CHAT_PACKET*>(ptr);
-		int other_id = my_packet->id;
-		if (other_id == g_myid) {
-			avatar.set_chat(my_packet->mess);
+		S2C_ChatMessage* my_packet = reinterpret_cast<S2C_ChatMessage*>(ptr);
+		int protocol_id = my_packet->object_id;
+		
+		if (protocol_id == g_myid) {
+			avatar.set_chat(my_packet->message);
 		}
 		else {
-			players[other_id].set_chat(my_packet->mess);
+			if (players.find(protocol_id) != players.end()) {
+				players[protocol_id].set_chat(my_packet->message);
+			}
 		}
-
 		break;
 	}
+
+	case S2C_STATUS_CHANGE:
+	{
+		S2C_StatusChange* my_packet = reinterpret_cast<S2C_StatusChange*>(ptr);
+		int protocol_id = my_packet->object_id;
+		
+		if (protocol_id == g_myid) {
+			avatar.set_hp(my_packet->hp, my_packet->max_hp);
+			avatar.set_stats(my_packet->exp, my_packet->level);
+			g_my_hp = my_packet->hp;
+			g_my_max_hp = my_packet->max_hp;
+		}
+		else {
+			if (players.find(protocol_id) != players.end()) {
+				players[protocol_id].set_hp(my_packet->hp, my_packet->max_hp);
+				players[protocol_id].set_stats(my_packet->exp, my_packet->level);
+			}
+		}
+		break;
+	}
+
 	default:
-		printf("Unknown PACKET type [%d]\n", ptr[1]);
+		printf("Unknown PACKET type [%d]\n", packet_type);
 	}
 }
 
@@ -226,7 +320,7 @@ void process_data(char* net_buf, size_t io_byte)
 	char* ptr = net_buf;
 	static size_t in_packet_size = 0;
 	static size_t saved_packet_size = 0;
-	static char packet_buffer[BUF_SIZE];
+	static char packet_buffer[4096];
 
 	while (0 != io_byte) {
 		if (0 == in_packet_size) in_packet_size = ptr[0];
@@ -248,17 +342,17 @@ void process_data(char* net_buf, size_t io_byte)
 
 void client_main()
 {
-	char net_buf[BUF_SIZE];
+	char net_buf[4096];
 	size_t	received;
 
-	auto recv_result = s_socket.receive(net_buf, BUF_SIZE, received);
+	auto recv_result = s_socket.receive(net_buf, 4096, received);
 	if (recv_result == sf::Socket::Error)
 	{
-		wcout << L"Recv 에러!";
+		wcout << L"Recv 에러!" << endl;
 		exit(-1);
 	}
 	if (recv_result == sf::Socket::Disconnected) {
-		wcout << L"Disconnected\n";
+		wcout << L"Disconnected\n" << endl;
 		exit(-1);
 	}
 	if (recv_result != sf::Socket::NotReady)
@@ -270,7 +364,7 @@ void client_main()
 			int tile_x = i + g_left_x;
 			int tile_y = j + g_top_y;
 			if ((tile_x < 0) || (tile_y < 0)) continue;
-			if (0 ==(tile_x /3 + tile_y /3) % 2) {
+			if (0 == (tile_x / 3 + tile_y / 3) % 2) {
 				white_tile.a_move(TILE_WIDTH * i, TILE_WIDTH * j);
 				white_tile.a_draw();
 			}
@@ -285,7 +379,7 @@ void client_main()
 	sf::Text text;
 	text.setFont(g_font);
 	char buf[100];
-	sprintf_s(buf, "(%d, %d)", avatar.m_x, avatar.m_y);
+	sprintf_s(buf, "(%d, %d) HP:%d/%d Lvl:%d Players:%zu", avatar.m_x, avatar.m_y, g_my_hp, g_my_max_hp, avatar.m_level, players.size());
 	text.setString(buf);
 	g_window->draw(text);
 }
@@ -294,31 +388,41 @@ void send_packet(void *packet)
 {
 	unsigned char *p = reinterpret_cast<unsigned char *>(packet);
 	size_t sent = 0;
-	s_socket.send(packet, p[0], sent);
+	sf::Socket::Status status = s_socket.send(packet, p[0], sent);
+	if (status == sf::Socket::Error) {
+		wcout << L"Send Error!" << endl;
+	}
 }
 
 int main()
 {
 	wcout.imbue(locale("korean"));
-	sf::Socket::Status status = s_socket.connect("127.0.0.1", PORT_NUM);
-	s_socket.setBlocking(false);
+	
+	wcout << L"서버에 연결 시도 중... (포트: " << PORT << L")" << endl;
+	sf::Socket::Status status = s_socket.connect("127.0.0.1", PORT);
 
 	if (status != sf::Socket::Done) {
-		wcout << L"서버와 연결할 수 없습니다.\n";
+		wcout << L"서버와 연결할 수 없습니다." << endl;
 		exit(-1);
 	}
 
+	wcout << L"서버 연결 성공!" << endl;
+	s_socket.setBlocking(false);
+
 	client_initialize();
-	CS_LOGIN_PACKET p;
-	p.size = sizeof(p);
-	p.type = CS_LOGIN;
+	
+	C2S_Login p;
+	p.size = sizeof(C2S_Login);
+	p.type = C2S_LOGIN;
 
 	string player_name{ "P" };
 	player_name += to_string(GetCurrentProcessId());
 	
-	strcpy_s(p.name, player_name.c_str());
+	strcpy_s(p.username, MAX_NAME_LEN, player_name.c_str());
 	send_packet(&p);
-	avatar.set_name(p.name);
+	avatar.set_name(p.username);
+	
+	wcout << L"로그인 패킷 전송: " << player_name.c_str() << endl;
 
 	sf::RenderWindow window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "2D CLIENT");
 	g_window = &window;
@@ -331,32 +435,63 @@ int main()
 			if (event.type == sf::Event::Closed)
 				window.close();
 			if (event.type == sf::Event::KeyPressed) {
-				int direction = -1;
 				switch (event.key.code) {
 				case sf::Keyboard::Left:
-					direction = 2;
+				{
+					C2S_Move move_packet;
+					move_packet.size = sizeof(C2S_Move);
+					move_packet.type = C2S_MOVE;
+					move_packet.x = avatar.m_x - 1;
+					move_packet.y = avatar.m_y;
+					move_packet.move_time = 100;
+					send_packet(&move_packet);
 					break;
+				}
 				case sf::Keyboard::Right:
-					direction = 3;
+				{
+					C2S_Move move_packet;
+					move_packet.size = sizeof(C2S_Move);
+					move_packet.type = C2S_MOVE;
+					move_packet.x = avatar.m_x + 1;
+					move_packet.y = avatar.m_y;
+					move_packet.move_time = 100;
+					send_packet(&move_packet);
 					break;
+				}
 				case sf::Keyboard::Up:
-					direction = 0;
+				{
+					C2S_Move move_packet;
+					move_packet.size = sizeof(C2S_Move);
+					move_packet.type = C2S_MOVE;
+					move_packet.x = avatar.m_x;
+					move_packet.y = avatar.m_y - 1;
+					move_packet.move_time = 100;
+					send_packet(&move_packet);
 					break;
+				}
 				case sf::Keyboard::Down:
-					direction = 1;
+				{
+					C2S_Move move_packet;
+					move_packet.size = sizeof(C2S_Move);
+					move_packet.type = C2S_MOVE;
+					move_packet.x = avatar.m_x;
+					move_packet.y = avatar.m_y + 1;
+					move_packet.move_time = 100;
+					send_packet(&move_packet);
 					break;
+				}
 				case sf::Keyboard::Escape:
+				{
+					C2S_Logout logout_packet;
+					logout_packet.size = sizeof(C2S_Logout);
+					logout_packet.type = C2S_LOGOUT;
+					send_packet(&logout_packet);
 					window.close();
 					break;
 				}
-				if (-1 != direction) {
-					CS_MOVE_PACKET p;
-					p.size = sizeof(p);
-					p.type = CS_MOVE;
-					p.direction = direction;
-					send_packet(&p);
+				default:
+					break;
 				}
-
 			}
 		}
 
