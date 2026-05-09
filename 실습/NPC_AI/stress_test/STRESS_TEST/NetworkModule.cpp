@@ -72,6 +72,13 @@ thread test_thread;
 
 float point_cloud[MAX_TEST * 2];
 
+struct ALIEN
+{
+    int id;
+    int x, y;
+    int visible_count;
+};
+
 void error_display(const char* msg, int err_no)
 {
     WCHAR* lpMsgBuf;
@@ -100,8 +107,8 @@ void DisconnectClient(int ci)
 
 void SendPacket(int cl, void* packet)
 {
-    // 원본 방식 그대로 패킷의 첫 바이트를 size로 읽음
     int psize = reinterpret_cast<unsigned char*>(packet)[0];
+    int ptype = reinterpret_cast<unsigned char*>(packet)[1];
     OverlappedEx* over = new OverlappedEx;
     over->event_type = OP_SEND;
     memcpy(over->IOCP_buf, packet, psize);
@@ -116,19 +123,16 @@ void SendPacket(int cl, void* packet)
         if (WSA_IO_PENDING != err_no)
             error_display("Error in SendPacket:", err_no);
     }
+    // std::cout << "Send Packet [" << ptype << "] To Client : " << cl << std::endl;
 }
 
 void ProcessPacket(int ci, unsigned char packet[])
 {
-    // pack(push, 1)이므로 1바이트(size)를 건너뛴 위치에서 4바이트 크기의 enum 타입 읽기
-    PACKET_TYPE pType = *reinterpret_cast<PACKET_TYPE*>(packet + 1);
-
-    switch (pType)
+    switch (packet[1])
     {
     case S2C_MOVE_OBJECT: {
         S2C_MoveObject* move_packet = reinterpret_cast<S2C_MoveObject*>(packet);
-        // NPC ID(1000000 이상) 접근 시 Out of bounds 방지
-        if (move_packet->object_id < MAX_CLIENTS && move_packet->object_id >= 0)
+        if (move_packet->object_id < MAX_CLIENTS)
         {
             int my_id = client_map[move_packet->object_id];
             if (-1 != my_id)
@@ -150,11 +154,11 @@ void ProcessPacket(int ci, unsigned char packet[])
         break;
     }
     case S2C_AVATAR_INFO: {
-        S2C_AvatarInfo* avatar_packet = reinterpret_cast<S2C_AvatarInfo*>(packet);
         g_clients[ci].connected = true;
         active_clients++;
-
+        S2C_AvatarInfo* avatar_packet = reinterpret_cast<S2C_AvatarInfo*>(packet);
         int my_id = ci;
+
         if (avatar_packet->playerId < MAX_CLIENTS && avatar_packet->playerId >= 0)
         {
             client_map[avatar_packet->playerId] = my_id;
@@ -185,7 +189,7 @@ void Worker_Thread()
         OverlappedEx* over;
         BOOL ret = GetQueuedCompletionStatus(g_hiocp, &io_size, &ci,
             reinterpret_cast<LPWSAOVERLAPPED*>(&over), INFINITE);
-
+        // std::cout << "GQCS :";
         int client_id = static_cast<int>(ci);
         if (FALSE == ret)
         {
@@ -193,28 +197,29 @@ void Worker_Thread()
             if (64 == err_no) DisconnectClient(client_id);
             else
             {
+                // error_display("GQCS : ", WSAGetLastError());
                 DisconnectClient(client_id);
             }
             if (OP_SEND == over->event_type) delete over;
-            continue;
         }
         if (0 == io_size)
         {
             DisconnectClient(client_id);
             continue;
         }
-
         if (OP_RECV == over->event_type)
         {
+            //std::cout << "RECV from Client :" << ci;
+            //std::cout << "  IO_SIZE : " << io_size << std::endl;
             unsigned char* buf = g_clients[ci].recv_over.IOCP_buf;
             unsigned psize = g_clients[ci].curr_packet_size;
             unsigned pr_size = g_clients[ci].prev_packet_data;
-
             while (io_size > 0)
             {
                 if (0 == psize) psize = buf[0];
                 if (io_size + pr_size >= psize)
                 {
+                    // 지금 패킷 완성 가능
                     unsigned char packet[MAX_PACKET_SIZE];
                     memcpy(packet, g_clients[ci].packet_buf, pr_size);
                     memcpy(packet + pr_size, buf, psize - pr_size);
@@ -222,7 +227,8 @@ void Worker_Thread()
                     io_size -= psize - pr_size;
                     buf += psize - pr_size;
                     psize = 0; pr_size = 0;
-                } else
+                }
+                else
                 {
                     memcpy(g_clients[ci].packet_buf + pr_size, buf, io_size);
                     pr_size += io_size;
@@ -231,7 +237,6 @@ void Worker_Thread()
             }
             g_clients[ci].curr_packet_size = psize;
             g_clients[ci].prev_packet_data = pr_size;
-
             DWORD recv_flag = 0;
             int ret = WSARecv(g_clients[ci].client_socket,
                 &g_clients[ci].recv_over.wsabuf, 1,
@@ -241,27 +246,37 @@ void Worker_Thread()
                 int err_no = WSAGetLastError();
                 if (err_no != WSA_IO_PENDING)
                 {
+                    //error_display("RECV ERROR", err_no);
                     DisconnectClient(client_id);
                 }
             }
-        } else if (OP_SEND == over->event_type)
+        }
+        else if (OP_SEND == over->event_type)
         {
             if (io_size != over->wsabuf.len)
             {
+                // std::cout << "Send Incomplete Error!\n";
                 DisconnectClient(client_id);
             }
             delete over;
-        } else if (OP_DO_MOVE == over->event_type)
+        }
+        else if (OP_DO_MOVE == over->event_type)
         {
+            // Not Implemented Yet
             delete over;
+        }
+        else
+        {
+            std::cout << "Unknown GQCS event!\n";
+            while (true);
         }
     }
 }
 
+
 constexpr int DELAY_LIMIT = 100;
 constexpr int DELAY_LIMIT2 = 150;
 constexpr int ACCEPT_DELY = 50;
-
 void Adjust_Number_Of_Client()
 {
     static int delay_multiplier = 1;
@@ -288,11 +303,13 @@ void Adjust_Number_Of_Client()
         DisconnectClient(client_to_close);
         client_to_close++;
         return;
-    } else if (DELAY_LIMIT < t_delay)
-    {
-        delay_multiplier = 10;
-        return;
     }
+    else
+        if (DELAY_LIMIT < t_delay)
+        {
+            delay_multiplier = 10;
+            return;
+        }
     if (max_limit - (max_limit / 20) < active_clients) return;
 
     increasing = true;
@@ -302,8 +319,9 @@ void Adjust_Number_Of_Client()
     SOCKADDR_IN ServerAddr;
     ZeroMemory(&ServerAddr, sizeof(SOCKADDR_IN));
     ServerAddr.sin_family = AF_INET;
-    ServerAddr.sin_port = htons(PORT); // 헤더에 정의된 PORT 사용
+    ServerAddr.sin_port = htons(PORT);
     ServerAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
 
     int Result = WSAConnect(g_clients[num_connections].client_socket, (sockaddr*)&ServerAddr, sizeof(ServerAddr), NULL, NULL, NULL, NULL);
     if (0 != Result)
@@ -322,12 +340,14 @@ void Adjust_Number_Of_Client()
     DWORD recv_flag = 0;
     CreateIoCompletionPort(reinterpret_cast<HANDLE>(g_clients[num_connections].client_socket), g_hiocp, num_connections, 0);
 
-    // C2S_Login 송신
     C2S_Login l_packet;
+
+    int temp = num_connections;
+    sprintf_s(l_packet.username, "%d", temp);
     l_packet.size = sizeof(l_packet);
     l_packet.type = C2S_LOGIN;
-    sprintf_s(l_packet.username, sizeof(l_packet.username), "TestUser%d", num_connections.load());
     SendPacket(num_connections, &l_packet);
+
 
     int ret = WSARecv(g_clients[num_connections].client_socket, &g_clients[num_connections].recv_over.wsabuf, 1,
         NULL, &recv_flag, &g_clients[num_connections].recv_over.over, NULL);
@@ -349,38 +369,25 @@ void Test_Thread()
 {
     while (true)
     {
+        //Sleep(max(20, global_delay));
         Adjust_Number_Of_Client();
 
         for (int i = 0; i < num_connections; ++i)
         {
             if (false == g_clients[i].connected) continue;
             if (g_clients[i].last_move_time + 1s > high_resolution_clock::now()) continue;
-
             g_clients[i].last_move_time = high_resolution_clock::now();
-
             C2S_Move my_packet;
             my_packet.size = sizeof(my_packet);
             my_packet.type = C2S_MOVE;
 
-            // 현재 좌표에서 랜덤 방향 1칸 이동 연산
-            short nx = g_clients[i].x;
-            short ny = g_clients[i].y;
             switch (rand() % 4)
             {
-            case 0: nx++; break; // 우
-            case 1: nx--; break; // 좌
-            case 2: ny++; break; // 하
-            case 3: ny--; break; // 상
+            case 0: my_packet.; break;
+            case 1: my_packet.direction = 1; break;
+            case 2: my_packet.direction = 2; break;
+            case 3: my_packet.direction = 3; break;
             }
-
-            // 헤더에 정의된 월드 범위를 사용 (WORLD_WIDTH, WORLD_HEIGHT)
-            if (nx < 0) nx = 0;
-            if (nx >= WORLD_WIDTH) nx = WORLD_WIDTH - 1;
-            if (ny < 0) ny = 0;
-            if (ny >= WORLD_HEIGHT) ny = WORLD_HEIGHT - 1;
-
-            my_packet.x = nx;
-            my_packet.y = ny;
             my_packet.move_time = static_cast<unsigned>(duration_cast<milliseconds>(high_resolution_clock::now().time_since_epoch()).count());
             SendPacket(i, &my_packet);
         }
@@ -399,7 +406,7 @@ void InitializeNetwork()
     num_connections = 0;
     last_connect_time = high_resolution_clock::now();
 
-    WSADATA wsadata;
+    WSADATA	wsadata;
     WSAStartup(MAKEWORD(2, 2), &wsadata);
 
     g_hiocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, 0, NULL, 0);
@@ -439,3 +446,4 @@ void GetPointCloud(int* size, float** points)
     *size = index;
     *points = point_cloud;
 }
+
