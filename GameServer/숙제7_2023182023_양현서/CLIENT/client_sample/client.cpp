@@ -302,8 +302,12 @@ void send_packet(void *packet)
 
 int main()
 {
+	std::string ipAddress;
+	std::cout << "접속할 IP 주소를 입력하세요: ";
+	std::cin >> ipAddress;
+
 	wcout.imbue(locale("korean"));
-	sf::Socket::Status status = s_socket.connect("127.0.0.1", PORT);
+	sf::Socket::Status status = s_socket.connect(ipAddress, PORT);
 	s_socket.setBlocking(false);
 
 	if (status != sf::Socket::Done) {

@@ -281,7 +281,7 @@ constexpr int DELAY_LIMIT = 100;
 constexpr int DELAY_LIMIT2 = 150;
 constexpr int ACCEPT_DELY = 10;
 
-void Adjust_Number_Of_Client()
+void Adjust_Number_Of_Client(std::string ipAddress)
 {
     static int delay_multiplier = 1;
     static int max_limit = MAXINT;
@@ -324,7 +324,7 @@ void Adjust_Number_Of_Client()
     ZeroMemory(&ServerAddr, sizeof(SOCKADDR_IN));
     ServerAddr.sin_family = AF_INET;
     ServerAddr.sin_port = htons(PORT);
-    ServerAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    ServerAddr.sin_addr.s_addr = inet_addr(ipAddress.c_str());
 
 
     int Result = WSAConnect(g_clients[num_connections].client_socket, (sockaddr*)&ServerAddr, sizeof(ServerAddr), NULL, NULL, NULL, NULL);
@@ -371,10 +371,14 @@ fail_to_connect:
 
 void Test_Thread()
 {
+    std::string ipAddress;
+    std::cout << "접속할 IP 주소를 입력하세요: ";
+    std::cin >> ipAddress;
+
     while (true)
     {
         //Sleep(max(20, global_delay));
-        Adjust_Number_Of_Client();
+        Adjust_Number_Of_Client(ipAddress);
 
         for (int i = 0; i < num_connections; ++i)
         {
