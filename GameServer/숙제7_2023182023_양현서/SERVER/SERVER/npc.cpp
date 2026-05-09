@@ -9,21 +9,23 @@
 #include <chrono>
 #include <concurrent_priority_queue.h>
 #include <tbb/concurrent_unordered_map.h>
-#include "protocol.h"
+#include "protocol_2026.h"
 
 #pragma comment(lib, "WS2_32.lib")
 #pragma comment(lib, "MSWSock.lib")
 using namespace std;
 using namespace std::chrono;
 
+constexpr int BUF_SIZE = 200;
+
 constexpr int MOVE_COOL_TIME = 1000; // ms
 
 constexpr int EVENT_MOVE = 1;
 constexpr int VIEW_RANGE = 5;
 
-constexpr int SECTOR_SIZE = VIEW_RANGE + 5;
-constexpr int SECTOR_ROWS = W_WIDTH / SECTOR_SIZE + 1;
-constexpr int SECTOR_COLS = W_HEIGHT / SECTOR_SIZE + 1;
+constexpr int SECTOR_SIZE = VIEW_RANGE + 10;
+constexpr int SECTOR_ROWS = WORLD_WIDTH / SECTOR_SIZE + 1;
+constexpr int SECTOR_COLS = WORLD_HEIGHT / SECTOR_SIZE + 1;
 
 struct SECTOR
 {
@@ -98,7 +100,7 @@ public:
     int _id;
     SOCKET _socket;
     short	_x, _y;
-    char	_name[NAME_SIZE];
+    char	_name[MAX_NAME_LEN];
     int		_prev_remain;
     unordered_set <int> _view_list;
     mutex	_vl;
@@ -152,14 +154,35 @@ public:
         OVER_EXP* sdata = new OVER_EXP{ reinterpret_cast<char*>(packet) };
         WSASend(_socket, &sdata->_wsabuf, 1, 0, 0, &sdata->_over, 0);
     }
-    void send_login_info_packet()
+    void send_login_success_packet()
     {
-        SC_LOGIN_INFO_PACKET p;
-        p.id = _id;
-        p.size = sizeof(SC_LOGIN_INFO_PACKET);
-        p.type = SC_LOGIN_INFO;
+        S2C_LoginResult p;
+        p.size = sizeof(S2C_LoginResult);
+        p.type = S2C_LOGIN_RESULT;
+        p.success = true;
+        do_send(&p);
+    }
+    void send_login_fail_packet()
+    {
+        S2C_LoginResult p;
+        p.size = sizeof(S2C_LoginResult);
+        p.type = S2C_LOGIN_RESULT;
+        p.success = false;
+        do_send(&p);
+    }
+    void send_avatar_info_packet()
+    {
+        S2C_AvatarInfo p;
+        p.size = sizeof(S2C_AvatarInfo);
+        p.type = S2C_AVATAR_INFO;
+        p.playerId = _id;
+        p.visualId = 0; 
         p.x = _x;
         p.y = _y;
+        p.hp = 100; 
+        p.max_hp = 100; 
+        p.exp = 0; 
+        p.level = 1; 
         do_send(&p);
     }
     void send_move_packet(int c_id);
@@ -176,10 +199,10 @@ public:
             return;
         }
         _vl.unlock();
-        SC_REMOVE_OBJECT_PACKET p;
-        p.id = c_id;
+        S2C_RemoveObject p;
+        p.object_id = c_id;
         p.size = sizeof(p);
-        p.type = SC_REMOVE_OBJECT;
+        p.type = S2C_REMOVE_OBJECT;
         do_send(&p);
     }
     void do_random_move();
@@ -214,7 +237,7 @@ OVER_EXP g_a_over;
 
 bool is_pc(int object_id)
 {
-    return object_id < MAX_USER;
+    return object_id < MAX_PLAYERS;
 }
 
 bool is_npc(int object_id)
@@ -224,7 +247,7 @@ bool is_npc(int object_id)
 
 int get_new_client_id()
 {
-    for (int i = 0; i < MAX_USER; ++i)
+    for (int i = 0; i < MAX_PLAYERS; ++i)
     {
         auto it = clients.find(i);
         if (it == clients.end() || it->second == nullptr)
@@ -295,9 +318,9 @@ void SESSION::do_random_move()
 
     switch (rand() % 4)
     {
-    case 0: if (_x < (W_WIDTH - 1)) _x++; break;
+    case 0: if (_x < (WORLD_WIDTH - 1)) _x++; break;
     case 1: if (_x > 0) _x--; break;
-    case 2: if (_y < (W_HEIGHT - 1)) _y++; break;
+    case 2: if (_y < (WORLD_HEIGHT - 1)) _y++; break;
     case 3:if (_y > 0) _y--; break;
     }
 
@@ -359,7 +382,7 @@ void SESSION::do_random_move()
 
     }
 
-    if (_id == MAX_USER)
+    if (_id == MAX_PLAYERS)
     {
         auto delay = system_clock::now() - npc_last_move_time;
         //std::cout << "NPC " << _id << " moved. Time since last move: " << duration_cast<milliseconds>(delay).count() << "ms\n";
@@ -374,10 +397,10 @@ void SESSION::send_move_packet(int c_id)
     if (it == clients.end() || it->second == nullptr) return;
     auto& target = it->second;
 
-    SC_MOVE_OBJECT_PACKET p;
-    p.id = c_id;
-    p.size = sizeof(SC_MOVE_OBJECT_PACKET);
-    p.type = SC_MOVE_OBJECT;
+    S2C_MoveObject p;
+    p.object_id = c_id;
+    p.size = sizeof(S2C_MoveObject);
+    p.type = S2C_MOVE_OBJECT;
     p.x = target->_x;
     p.y = target->_y;
     p.move_time = target->last_move_time;
@@ -390,11 +413,11 @@ void SESSION::send_add_player_packet(int c_id)
     if (it == clients.end() || it->second == nullptr) return;
     auto& target = it->second;
 
-    SC_ADD_OBJECT_PACKET add_packet;
-    add_packet.id = c_id;
-    strcpy_s(add_packet.name, target->_name);
+    S2C_AddObject add_packet;
+    add_packet.object_id = c_id;
+    strcpy_s(add_packet.obj_name, target->_name);
     add_packet.size = sizeof(add_packet);
-    add_packet.type = SC_ADD_OBJECT;
+    add_packet.type = S2C_ADD_OBJECT;
     add_packet.x = target->_x;
     add_packet.y = target->_y;
     _vl.lock();
@@ -405,11 +428,11 @@ void SESSION::send_add_player_packet(int c_id)
 
 void SESSION::send_chat_packet(int p_id, const char* mess)
 {
-    SC_CHAT_PACKET packet;
-    packet.id = p_id;
+    S2C_ChatMessage packet;
+    packet.object_id = p_id;
     packet.size = sizeof(packet);
-    packet.type = SC_CHAT;
-    strcpy_s(packet.mess, mess);
+    packet.type = S2C_CHAT_MESSAGE;
+    strcpy_s(packet.message, mess);
     do_send(&packet);
 }
 
@@ -418,19 +441,20 @@ void process_packet(int c_id, char* packet)
     // c_id 존재는 보장됨. clients[c_id]로 접근 가능
     switch (packet[1])
     {
-    case CS_LOGIN: {
-        CS_LOGIN_PACKET* p = reinterpret_cast<CS_LOGIN_PACKET*>(packet);
-        strcpy_s(clients[c_id]->_name, p->name);
+    case C2S_LOGIN: {
+        C2S_Login* p = reinterpret_cast<C2S_Login*>(packet);
+        strcpy_s(clients[c_id]->_name, p->username);
         {
             lock_guard<mutex> ll{ clients[c_id]->_s_lock };
-            clients[c_id]->_x = rand() % W_WIDTH;
-            clients[c_id]->_y = rand() % W_HEIGHT;
+            clients[c_id]->_x = rand() % WORLD_WIDTH;
+            clients[c_id]->_y = rand() % WORLD_HEIGHT;
             clients[c_id]->_state = ST_INGAME;
             clients[c_id]->_sector_x = clients[c_id]->_x / SECTOR_SIZE;
             clients[c_id]->_sector_y = clients[c_id]->_y / SECTOR_SIZE;
             add_to_sector(c_id, clients[c_id]->_sector_x, clients[c_id]->_sector_y);
         }
-        clients[c_id]->send_login_info_packet();
+        clients[c_id]->send_login_success_packet();
+        clients[c_id]->send_avatar_info_packet();
 
         for (auto& pl : clients)
         {
@@ -452,18 +476,18 @@ void process_packet(int c_id, char* packet)
         }
         break;
     }
-    case CS_MOVE: {
-        CS_MOVE_PACKET* p = reinterpret_cast<CS_MOVE_PACKET*>(packet);
+    case C2S_MOVE: {
+        C2S_Move* p = reinterpret_cast<C2S_Move*>(packet);
         clients[c_id]->last_move_time = p->move_time;
-        short x = clients[c_id]->_x;
-        short y = clients[c_id]->_y;
-        switch (p->direction)
-        {
-        case 0: if (y > 0) y--; break;
-        case 1: if (y < W_HEIGHT - 1) y++; break;
-        case 2: if (x > 0) x--; break;
-        case 3: if (x < W_WIDTH - 1) x++; break;
-        }
+
+        short x = p->x;
+        short y = p->y;
+
+        if (x < 0) x = 0;
+        else if (x >= WORLD_WIDTH) x = WORLD_WIDTH - 1;
+
+        if (y < 0) y = 0;
+        else if (y >= WORLD_HEIGHT) y = WORLD_HEIGHT - 1;
 
         int old_sx = clients[c_id]->_sector_x;
         int old_sy = clients[c_id]->_sector_y;
@@ -713,11 +737,11 @@ void worker_thread(HANDLE h_iocp)
 void InitializeNPC()
 {
     cout << "NPC intialize begin.\n";
-    for (int i = MAX_USER; i < MAX_USER + MAX_NPC; ++i)
+    for (int i = MAX_PLAYERS; i < MAX_PLAYERS + NUM_NPCS; ++i)
     {
         clients[i] = std::make_shared<SESSION>();
-        clients[i]->_x = rand() % W_WIDTH;
-        clients[i]->_y = rand() % W_HEIGHT;
+        clients[i]->_x = rand() % WORLD_WIDTH;
+        clients[i]->_y = rand() % WORLD_HEIGHT;
         clients[i]->_id = i;
         sprintf_s(clients[i]->_name, "NPC%d", i);
         clients[i]->_state = ST_INGAME;
@@ -772,7 +796,7 @@ int main()
     SOCKADDR_IN server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(PORT_NUM);
+    server_addr.sin_port = htons(PORT);
     server_addr.sin_addr.S_un.S_addr = INADDR_ANY;
     ::bind(g_s_socket, reinterpret_cast<sockaddr*>(&server_addr), sizeof(server_addr));
     ::listen(g_s_socket, SOMAXCONN);
